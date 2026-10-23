@@ -2,6 +2,7 @@
 
 use std::{
     marker::PhantomData,
+    os::raw::c_int,
     sync::{
         Mutex, PoisonError,
         atomic::{AtomicPtr, Ordering},
@@ -18,6 +19,7 @@ use crate::{
     exception::PhpException,
     flags::{ClassFlags, ConstantFlags, MethodFlags, PropertyFlags},
     internal::property::PropertyDescriptor,
+    types::{ZendHashTable, ZendObject, Zval},
     zend::{ClassEntry, ExecuteData, ZendObjectHandlers},
 };
 
@@ -243,6 +245,44 @@ impl<T: RegisteredClass> ClassMetadata<T> {
     /// the class metadata.
     pub fn handlers(&self) -> &ZendObjectHandlers {
         self.handlers.get_or_init(ZendObjectHandlers::new::<T>)
+    }
+
+    /// Initializes this class's object handlers with a custom garbage collector
+    /// callback for PHP references held inside its Rust payload.
+    ///
+    /// Call during module initialization, before the first call to
+    /// [`Self::handlers`] or allocation of an object of this class. Returns
+    /// `false` without changing anything if the handlers are already initialized.
+    /// The handlers persist across module restarts, so registration code must
+    /// allow for this method to return `false` on subsequent MINIT calls.
+    ///
+    /// Only `get_gc` is replaced. The table keeps the address used by
+    /// [`ZendClassObject`](crate::types::ZendClassObject) to identify Rust-backed
+    /// objects, and remains immutable once initialized.
+    ///
+    /// # Safety
+    ///
+    /// The callback must obey Zend's `get_gc` contract for every instance of `T`,
+    /// including PHP subclasses and objects whose Rust payload is uninitialized.
+    /// It must report owned PHP references with their correct multiplicity,
+    /// including ordinary Zend properties, without changing reference counts.
+    /// Returned storage must remain valid while the collector traverses it.
+    /// It must not invoke PHP, mutate the object graph, panic, or unwind.
+    #[must_use]
+    pub unsafe fn initialize_gc_handler(
+        &self,
+        get_gc: unsafe extern "C" fn(
+            *mut ZendObject,
+            *mut *mut Zval,
+            *mut c_int,
+        ) -> *mut ZendHashTable,
+    ) -> bool {
+        if self.handlers.get().is_some() {
+            return false;
+        }
+        let mut handlers = ZendObjectHandlers::new::<T>();
+        handlers.get_gc = Some(get_gc);
+        self.handlers.set(handlers).is_ok()
     }
 
     /// Checks if the class entry has been stored, returning a boolean.

@@ -53,6 +53,7 @@
 - [Module Globals](./advanced/module_globals.md)
 - [Worker Mode](./advanced/worker_mode.md)
 - [Memory Model at MINIT](./advanced/minit_memory.md)
+- [Garbage Collection](./advanced/garbage_collection.md)
 - [Allowed Bindings](./advanced/allowed_bindings.md)
 
 # Migration Guides
